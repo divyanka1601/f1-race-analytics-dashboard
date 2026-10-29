@@ -1195,6 +1195,18 @@ def playback_controls(_start, _pause, _reset, n_now):
     Output("timing-strip", "children"),
     Input("anim-interval", "n_intervals"), Input("speed-select", "value"),
 )
+CAR_LATERAL_OFFSET_M = 22.0   # visual offset so overlapping cars stay distinguishable
+
+
+def car_xy(state: dict, side: int):
+    s = state["s"]
+    sa, sb = max(s - 15, 0.0), min(s + 15, TRACK_LENGTH_M)
+    x0, y0 = np.interp(sa, TRACK["sc"], TRACK["xc"]), np.interp(sa, TRACK["sc"], TRACK["yc"])
+    x1, y1 = np.interp(sb, TRACK["sc"], TRACK["xc"]), np.interp(sb, TRACK["sc"], TRACK["yc"])
+    dx, dy = x1 - x0, y1 - y0
+    n = math.hypot(dx, dy) or 1.0
+    return (state["x"] - side * dy / n * CAR_LATERAL_OFFSET_M,
+            state["y"] + side * dx / n * CAR_LATERAL_OFFSET_M)
 def animate(n, speed):
     speed = speed or 1
     t_loop = (n * SIM_DT * speed) % LOOP_PERIOD
@@ -1205,12 +1217,13 @@ def animate(n, speed):
         states[c] = telemetry_at(prof[c], tt)
         done[c] = t_loop >= prof[c]["lap_time"]
 
-    patch = Patch()
-    for c in CODES:
+        patch = Patch()
+    for c, side in (("LEC", 1), ("VER", -1)):
+        px, py = car_xy(states[c], side)
         for key in ("glow", "core"):
             i = TRACK_IDX[key][c]
-            patch["data"][i]["x"] = [states[c]["x"]]
-            patch["data"][i]["y"] = [states[c]["y"]]
+            patch["data"][i]["x"] = [px]
+            patch["data"][i]["y"] = [py]
 
     gap_m = states["LEC"]["s"] - states["VER"]["s"]
     if abs(gap_m) < 0.5:
