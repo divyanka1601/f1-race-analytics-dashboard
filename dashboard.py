@@ -502,6 +502,20 @@ def telemetry_at(prof: dict, tt: float) -> dict:
                 y=float(np.interp(s, TRACK["sc"], TRACK["yc"])), t=tt)
 
 
+CAR_LATERAL_OFFSET_M = 22.0   # visual offset so overlapping cars stay distinguishable
+
+
+def car_xy(state: dict, side: int):
+    s = state["s"]
+    sa, sb = max(s - 15, 0.0), min(s + 15, TRACK_LENGTH_M)
+    x0, y0 = np.interp(sa, TRACK["sc"], TRACK["xc"]), np.interp(sa, TRACK["sc"], TRACK["yc"])
+    x1, y1 = np.interp(sb, TRACK["sc"], TRACK["xc"]), np.interp(sb, TRACK["sc"], TRACK["yc"])
+    dx, dy = x1 - x0, y1 - y0
+    n = math.hypot(dx, dy) or 1.0
+    return (state["x"] - side * dy / n * CAR_LATERAL_OFFSET_M,
+            state["y"] + side * dx / n * CAR_LATERAL_OFFSET_M)
+
+
 # ---------- 5b. lap-time analysis ----------------------------------------------
 def fig_lap_race(tyres):
     df = LOG[LOG.Session == "race"]
@@ -937,45 +951,93 @@ def bar(label, pct, color, text):
                           className="bar-fill"), className="bar-track")], className="bar-wrap")
 
 
-def hud_card(code, st, lap_str, done):
+def hud_shell(code):
+    """Static HUD markup. Every live value has an element id and is updated in the browser (clientside JS)."""
     d = DRIVERS[code]
-    ers_name = {0: "BALANCED", 1: "DEPLOY", 2: "HARVEST"}[st["ers"]]
-    ers_col = ERS_COLORS[ers_name]
+    c = code
+
+    def live_bar(label, key, color):
+        return html.Div([
+            html.Div([html.Span(label, className="bar-label"), html.Span("", id=f"{c}-{key}-txt", className="bar-text")],
+                     className="bar-head"),
+            html.Div(html.Div(id=f"{c}-{key}-bar", className="bar-fill",
+                              style={"width": "0%", "background": color,
+                                     "boxShadow": f"0 0 10px {rgba(color, 0.55)}"}),
+                     className="bar-track")], className="bar-wrap")
+
+    rpm_color = d["line"] if code == "LEC" else RB_YELLOW
     return html.Div([
         html.Div([
             html.Div([html.Div(code, className="hud-code", style={"color": d["line"]}),
                       html.Div(d["name"].upper(), className="hud-name"),
                       html.Div(d["team"], className="hud-team")]),
             html.Div([html.Div("LAP", className="mini-label"),
-                      html.Div(lap_str + (" ✓" if done else ""), className="hud-lap",
-                               style={"color": d["line"]})], style={"textAlign": "right"}),
+                      html.Div("0:00.000", id=f"{c}-lap", className="hud-lap", style={"color": d["line"]})],
+                     style={"textAlign": "right"}),
         ], className="hud-top"),
         html.Div([
-            html.Div([html.Div(f"{st['speed']:.0f}", className="hud-speed", style={"color": TEXT}),
+            html.Div([html.Div("0", id=f"{c}-speed", className="hud-speed", style={"color": TEXT}),
                       html.Div("KM/H", className="mini-label")], className="hud-speed-box"),
             html.Div([html.Div("GEAR", className="mini-label"),
-                      html.Div(str(st["gear"]), className="hud-gear",
+                      html.Div("1", id=f"{c}-gear", className="hud-gear",
                                style={"color": d["line"], "borderColor": d["line"]})], className="hud-gear-box"),
             html.Div([html.Div("RPM", className="mini-label"),
-                      html.Div(f"{st['rpm']:,.0f}", className="hud-rpm")], className="hud-gear-box"),
+                      html.Div("0", id=f"{c}-rpm", className="hud-rpm")], className="hud-gear-box"),
         ], className="hud-main"),
-        bar("RPM", st["rpm"] / 125.0, d["line"] if code == "LEC" else RB_YELLOW, f"{st['rpm']:,.0f} / 12,500"),
-        bar("THROTTLE", st["thr"], THROTTLE_GREEN, f"{st['thr']:.0f}%"),
-        bar("BRAKE", st["brk"], BRAKE_RED, f"{st['brk']:.0f}%"),
+        live_bar("RPM", "rpmbar", rpm_color),
+        live_bar("THROTTLE", "thr", THROTTLE_GREEN),
+        live_bar("BRAKE", "brk", BRAKE_RED),
         html.Div([
             html.Span("ERS", className="mini-label", style={"marginRight": "8px"}),
-            html.Span(f"⚡ {ers_name}", className="ers-badge",
-                      style={"color": ers_col, "borderColor": ers_col, "boxShadow": f"0 0 10px {rgba(ers_col, 0.35)}"}),
-            html.Span(f"BATTERY {st['soc']:.0f}%", className="bar-text", style={"marginLeft": "auto"}),
+            html.Span("⚡ BALANCED", id=f"{c}-ers", className="ers-badge",
+                      style={"color": MUTED, "borderColor": MUTED}),
+            html.Span("BATTERY 0%", id=f"{c}-soc-txt", className="bar-text", style={"marginLeft": "auto"}),
         ], className="ers-row"),
-        bar("ERS STATE OF CHARGE", st["soc"], ers_col if ers_name != "BALANCED" else "#6C7A96", ""),
+        html.Div(html.Div(id=f"{c}-soc-bar", className="bar-fill",
+                          style={"width": "0%", "background": "#6C7A96"}), className="bar-track"),
     ], className="hud-card", style={"borderColor": d["line"],
                                     "boxShadow": f"0 0 0 1px {rgba(d['line'], 0.20)}, 0 0 26px {rgba(d['line'], 0.14)}",
                                     "background": f"linear-gradient(160deg, {rgba(d['fill'], 0.30)} 0%, {PANEL} 55%)"})
 
 
+def timing_strip_shell():
+    return html.Div([
+        html.Div([html.Div("FERRARI · LEC", className="mini-label", style={"color": FERRARI}),
+                  html.Div("0:00.000", id="ts-LEC", className="ts-time", style={"color": FERRARI})],
+                 className="ts-block"),
+        html.Div([html.Div("ON-TRACK GAP", className="mini-label", style={"marginBottom": "4px"}),
+                  html.Div("LEVEL", id="ts-gap", className="ts-gap", style={"color": MUTED, "borderColor": MUTED})],
+                 className="ts-block"),
+        html.Div([html.Div("RED BULL · VER", className="mini-label", style={"color": RB_YELLOW}),
+                  html.Div("0:00.000", id="ts-VER", className="ts-time", style={"color": RB_YELLOW})],
+                 className="ts-block"),
+    ], className="f1-card timing-strip")
+
+
 LOOP_PERIOD = max(PROFILES["quali"][c]["lap_time"] for c in CODES) + 2.0
-SIM_DT = 0.25           # seconds of sim time per 80 ms tick at 1x
+SIM_DT = 0.1            # seconds of sim time per 100 ms browser tick at 1x (real time)
+SAMPLE_DT = 0.1         # telemetry sampling step sent to the browser
+
+
+def build_telemetry_store() -> dict:
+    """Pre-compute everything the browser needs to animate the pole-lap ghost run on its own."""
+    out = {"dt": SAMPLE_DT, "loop": LOOP_PERIOD, "sim_dt": SIM_DT, "cars": {}}
+    for code, side in (("LEC", 1), ("VER", -1)):
+        prof = PROFILES["quali"][code]
+        n = int(prof["lap_time"] / SAMPLE_DT) + 2
+        rows = {k: [] for k in ("t", "x", "y", "s", "v", "g", "rpm", "thr", "brk", "ers", "soc")}
+        for i in range(n):
+            st = telemetry_at(prof, i * SAMPLE_DT)
+            px, py = car_xy(st, side)
+            for k, val in (("t", st["t"]), ("x", px), ("y", py), ("s", st["s"]), ("v", st["speed"]),
+                           ("g", st["gear"]), ("rpm", st["rpm"]), ("thr", st["thr"]), ("brk", st["brk"]),
+                           ("ers", st["ers"]), ("soc", st["soc"])):
+                rows[k].append(round(float(val), 2))
+        rows["lap_time"] = round(float(prof["lap_time"]), 3)
+        out["cars"][code] = rows
+    return out
+
+
 
 
 def build_layout():
@@ -987,9 +1049,9 @@ def build_layout():
             dbc.Col(card(dcc.Graph(id="track-graph", figure=build_track_figure(), config={"displayModeBar": False}),
                          "LIVE LAP SIMULATOR · POLE-LAP GHOST RUN", "pad-0"), lg=7),
             dbc.Col([
-                html.Div(id="timing-strip", className="f1-card timing-strip"),
-                html.Div(id="hud-LEC", className="mt-3"),
-                html.Div(id="hud-VER", className="mt-3"),
+                timing_strip_shell(),
+                html.Div(hud_shell("LEC"), className="mt-3"),
+                html.Div(hud_shell("VER"), className="mt-3"),
             ], lg=5),
         ], className="g-3 mt-1"),
         dbc.Row([
@@ -1026,7 +1088,9 @@ def build_layout():
         ], className="f1-card mt-3"),
         html.Div("Synthetic, physics-informed data for portfolio demonstration · Stylised logo, not an official asset · "
                  "Not affiliated with Formula 1, Ferrari or Red Bull Racing.", className="f1-footer"),
-        dcc.Interval(id="anim-interval", interval=250, n_intervals=0, disabled=False),
+        dcc.Interval(id="anim-interval", interval=100, n_intervals=0, disabled=False),
+        dcc.Store(id="telemetry-store", data=build_telemetry_store()),
+        dcc.Store(id="anim-dummy"),
     ], fluid=True, className="f1-root")
 
 
@@ -1190,62 +1254,82 @@ def playback_controls(_start, _pause, _reset, n_now):
     return False, no_update, True, False, False, live          # initial load or Start
 
 
-CAR_LATERAL_OFFSET_M = 22.0   # visual offset so overlapping cars stay distinguishable
+CLIENT_ANIM_JS = """
+function(n, speed, data) {
+  var NU = window.dash_clientside.no_update;
+  if (!data) { return NU; }
+  speed = speed || 1;
+  var tLoop = ((n || 0) * data.sim_dt * speed) % data.loop;
+  var ERS = {0: ["BALANCED", "#8D96A8"], 1: ["DEPLOY", "#00D2FF"], 2: ["HARVEST", "#B388FF"]};
+  var st = {};
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), r = sec - 60 * m;
+    return m + ":" + (r < 10 ? "0" : "") + r.toFixed(3);
+  }
+  function setText(id, txt) { var e = document.getElementById(id); if (e) { e.textContent = txt; } }
+  function setW(id, pct, color) {
+    var e = document.getElementById(id);
+    if (e) { e.style.width = Math.max(0, Math.min(100, pct)).toFixed(1) + "%"; if (color) { e.style.background = color; } }
+  }
+  ["LEC", "VER"].forEach(function(code) {
+    var c = data.cars[code];
+    var tt = Math.min(tLoop, c.lap_time);
+    var f = tt / data.dt, i0 = Math.floor(f), i1 = Math.min(i0 + 1, c.t.length - 1), w = f - i0;
+    i0 = Math.min(i0, c.t.length - 1);
+    function lerp(k) { return c[k][i0] + (c[k][i1] - c[k][i0]) * w; }
+    var o = {t: tt, x: lerp("x"), y: lerp("y"), s: lerp("s"), v: lerp("v"), rpm: lerp("rpm"),
+             thr: lerp("thr"), brk: lerp("brk"), soc: lerp("soc"), g: c.g[i0], ers: c.ers[i0],
+             done: tLoop >= c.lap_time};
+    st[code] = o;
+    var ers = ERS[o.ers];
+    setText(code + "-lap", fmt(o.t) + (o.done ? " ✓" : ""));
+    setText(code + "-speed", Math.round(o.v));
+    setText(code + "-gear", String(o.g));
+    setText(code + "-rpm", Math.round(o.rpm).toLocaleString("en-US"));
+    setText(code + "-rpmbar-txt", Math.round(o.rpm).toLocaleString("en-US") + " / 12,500");
+    setW(code + "-rpmbar-bar", o.rpm / 125.0);
+    setText(code + "-thr-txt", Math.round(o.thr) + "%");
+    setW(code + "-thr-bar", o.thr);
+    setText(code + "-brk-txt", Math.round(o.brk) + "%");
+    setW(code + "-brk-bar", o.brk);
+    var eb = document.getElementById(code + "-ers");
+    if (eb) {
+      eb.textContent = "⚡ " + ers[0];
+      eb.style.color = ers[1]; eb.style.borderColor = ers[1];
+      eb.style.boxShadow = "0 0 10px " + ers[1] + "59";
+    }
+    setText(code + "-soc-txt", "BATTERY " + Math.round(o.soc) + "%");
+    setW(code + "-soc-bar", o.soc, o.ers === 0 ? "#6C7A96" : ers[1]);
+  });
+  setText("ts-LEC", fmt(st.LEC.t));
+  setText("ts-VER", fmt(st.VER.t));
+  var gap = st.LEC.s - st.VER.s, g = document.getElementById("ts-gap");
+  if (g) {
+    if (Math.abs(gap) < 0.5) { g.textContent = "LEVEL"; g.style.color = "#8D96A8"; g.style.borderColor = "#8D96A8"; }
+    else {
+      var lead = gap > 0 ? "LEC" : "VER", col = gap > 0 ? "#EF1A2D" : "#FFCC00";
+      g.textContent = (gap > 0 ? "FER" : "RBR") + " +" + Math.round(Math.abs(gap)) + " m";
+      g.style.color = col; g.style.borderColor = col;
+    }
+  }
+  var host = document.getElementById("track-graph");
+  var gd = host ? (host.querySelector(".js-plotly-plot") || host) : null;
+  if (gd && window.Plotly && gd.data) {
+    window.Plotly.restyle(gd, {
+      x: [[st.LEC.x], [st.LEC.x], [st.VER.x], [st.VER.x]],
+      y: [[st.LEC.y], [st.LEC.y], [st.VER.y], [st.VER.y]]
+    }, [5, 6, 7, 8]);
+  }
+  return NU;
+}
+"""
 
-
-def car_xy(state: dict, side: int):
-    s = state["s"]
-    sa, sb = max(s - 15, 0.0), min(s + 15, TRACK_LENGTH_M)
-    x0, y0 = np.interp(sa, TRACK["sc"], TRACK["xc"]), np.interp(sa, TRACK["sc"], TRACK["yc"])
-    x1, y1 = np.interp(sb, TRACK["sc"], TRACK["xc"]), np.interp(sb, TRACK["sc"], TRACK["yc"])
-    dx, dy = x1 - x0, y1 - y0
-    n = math.hypot(dx, dy) or 1.0
-    return (state["x"] - side * dy / n * CAR_LATERAL_OFFSET_M,
-            state["y"] + side * dx / n * CAR_LATERAL_OFFSET_M)
-
-
-@app.callback(
-    Output("track-graph", "figure"), Output("hud-LEC", "children"), Output("hud-VER", "children"),
-    Output("timing-strip", "children"),
+app.clientside_callback(
+    CLIENT_ANIM_JS,
+    Output("anim-dummy", "data"),
     Input("anim-interval", "n_intervals"), Input("speed-select", "value"),
+    State("telemetry-store", "data"),
 )
-def animate(n, speed):
-    speed = speed or 1
-    t_loop = (n * SIM_DT * speed) % LOOP_PERIOD
-    prof = PROFILES["quali"]
-    states, done = {}, {}
-    for c in CODES:
-        tt = min(t_loop, prof[c]["lap_time"])
-        states[c] = telemetry_at(prof[c], tt)
-        done[c] = t_loop >= prof[c]["lap_time"]
-
-    patch = Patch()
-    for c, side in (("LEC", 1), ("VER", -1)):
-        px, py = car_xy(states[c], side)
-        for key in ("glow", "core"):
-            i = TRACK_IDX[key][c]
-            patch["data"][i]["x"] = [px]
-            patch["data"][i]["y"] = [py]
-
-    gap_m = states["LEC"]["s"] - states["VER"]["s"]
-    if abs(gap_m) < 0.5:
-        gap_label, gap_col = "LEVEL", MUTED
-    else:
-        lead = "LEC" if gap_m > 0 else "VER"
-        gap_label, gap_col = f"{SHORT[lead]} +{abs(gap_m):.0f} m", DRIVERS[lead]["line"]
-    strip = [
-        html.Div([html.Div("FERRARI · LEC", className="mini-label", style={"color": FERRARI}),
-                  html.Div(format_lap(states["LEC"]["t"]), className="ts-time", style={"color": FERRARI})],
-                 className="ts-block"),
-        html.Div([html.Div("ON-TRACK GAP", className="mini-label", style={"marginBottom": "4px"}),
-                  html.Div(gap_label, className="ts-gap", style={"color": gap_col, "borderColor": gap_col})],
-                 className="ts-block"),
-        html.Div([html.Div("RED BULL · VER", className="mini-label", style={"color": RB_YELLOW}),
-                  html.Div(format_lap(states["VER"]["t"]), className="ts-time", style={"color": RB_YELLOW})],
-                 className="ts-block"),
-    ]
-    huds = [hud_card(c, states[c], format_lap(states[c]["t"]), done[c]) for c in CODES]
-    return patch, huds[0], huds[1], strip
 
 
 @app.callback(
