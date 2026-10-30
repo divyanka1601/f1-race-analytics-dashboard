@@ -1,6 +1,6 @@
  dash>=2.9
-   dash-bootstrap-components
-   plotly
-   pandas
-   numpy
-   gunicorn
+ dash-bootstrap-components
+ plotly
+ pandas
+ numpy
+ gunicorn
