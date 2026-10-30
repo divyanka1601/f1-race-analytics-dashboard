@@ -475,10 +475,10 @@ def build_track_figure():
     for code in CODES:                                                                    # 5-8 cars
         d = DRIVERS[code]
         fig.add_trace(go.Scatter(x=[x[0]], y=[y[0]], mode="markers", showlegend=False, hoverinfo="skip",
-                                 marker=dict(size=32, color=d["glow"])))
+                                 marker=dict(size=26, color=d["glow"])))
         fig.add_trace(go.Scatter(x=[x[0]], y=[y[0]], mode="markers+text", text=[code], name=d["name"],
                                  textposition="top center", textfont=dict(size=11, color=d["line"]),
-                                 marker=dict(size=15, color=d["fill"], line=dict(color=d["edge"], width=3)),
+                                 marker=dict(size=12, color=d["fill"], line=dict(color=d["edge"], width=3)),
                                  hoverinfo="skip", showlegend=True))
     fig.update_layout(
         height=560, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor="rgba(0,0,0,0)",
@@ -975,7 +975,7 @@ def hud_card(code, st, lap_str, done):
 
 
 LOOP_PERIOD = max(PROFILES["quali"][c]["lap_time"] for c in CODES) + 2.0
-SIM_DT = 0.08           # seconds of sim time per 80 ms tick at 1x
+SIM_DT = 0.25           # seconds of sim time per 80 ms tick at 1x
 
 
 def build_layout():
@@ -1026,7 +1026,7 @@ def build_layout():
         ], className="f1-card mt-3"),
         html.Div("Synthetic, physics-informed data for portfolio demonstration · Stylised logo, not an official asset · "
                  "Not affiliated with Formula 1, Ferrari or Red Bull Racing.", className="f1-footer"),
-        dcc.Interval(id="anim-interval", interval=80, n_intervals=0, disabled=False),
+        dcc.Interval(id="anim-interval", interval=250, n_intervals=0, disabled=False),
     ], fluid=True, className="f1-root")
 
 
@@ -1190,11 +1190,6 @@ def playback_controls(_start, _pause, _reset, n_now):
     return False, no_update, True, False, False, live          # initial load or Start
 
 
-@app.callback(
-    Output("track-graph", "figure"), Output("hud-LEC", "children"), Output("hud-VER", "children"),
-    Output("timing-strip", "children"),
-    Input("anim-interval", "n_intervals"), Input("speed-select", "value"),
-)
 CAR_LATERAL_OFFSET_M = 22.0   # visual offset so overlapping cars stay distinguishable
 
 
@@ -1207,6 +1202,13 @@ def car_xy(state: dict, side: int):
     n = math.hypot(dx, dy) or 1.0
     return (state["x"] - side * dy / n * CAR_LATERAL_OFFSET_M,
             state["y"] + side * dx / n * CAR_LATERAL_OFFSET_M)
+
+
+@app.callback(
+    Output("track-graph", "figure"), Output("hud-LEC", "children"), Output("hud-VER", "children"),
+    Output("timing-strip", "children"),
+    Input("anim-interval", "n_intervals"), Input("speed-select", "value"),
+)
 def animate(n, speed):
     speed = speed or 1
     t_loop = (n * SIM_DT * speed) % LOOP_PERIOD
@@ -1217,7 +1219,7 @@ def animate(n, speed):
         states[c] = telemetry_at(prof[c], tt)
         done[c] = t_loop >= prof[c]["lap_time"]
 
-        patch = Patch()
+    patch = Patch()
     for c, side in (("LEC", 1), ("VER", -1)):
         px, py = car_xy(states[c], side)
         for key in ("glow", "core"):
